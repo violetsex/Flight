@@ -1,0 +1,178 @@
+#include <Arduino.h>
+#include <U8g2lib.h>  // 使用 U8G2 库控制 OLED 屏幕
+
+// OLED 屏幕引脚设置
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ 22, /* data=*/ 21);
+
+// XY摇杆引脚设置
+#define X_PIN 32  // X 轴模拟输入
+#define Y_PIN 33  // Y 轴模拟输入
+#define K_PIN 25  // 摇杆按键输入
+
+// 游戏设置
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define BOX_SIZE 4        // 每个方块大小
+#define MAX_LENGTH 50     // 蛇的最大长度
+#define DEADZONE 200      // 摇杆的死区范围
+
+// 定时控制
+unsigned long previousMillis = 0;
+const long interval = 500;  // 每 500 毫秒更新一次蛇的移动
+
+// 变量定义
+int snakeX[MAX_LENGTH] = {64};   // 蛇的每一节 X 位置
+int snakeY[MAX_LENGTH] = {32};   // 蛇的每一节 Y 位置
+int snakeLength = 5;             // 蛇的初始长度
+int foodX, foodY;                // 食物的坐标
+int directionX = 1, directionY = 0;  // 蛇的移动方向，初始向右
+bool gameover = false;           // 游戏结束标志
+
+// 生成随机食物
+void generateFood() {
+  foodX = random(0, SCREEN_WIDTH / BOX_SIZE) * BOX_SIZE;
+  foodY = random(0, SCREEN_HEIGHT / BOX_SIZE) * BOX_SIZE;
+}
+
+// 初始化设置
+void setup() {
+  // 初始化串口和 OLED
+  Serial.begin(115200);
+  u8g2.begin();
+
+  // 初始化摇杆按键输入
+  pinMode(K_PIN, INPUT_PULLUP);  
+
+  // 随机生成第一个食物
+  generateFood();
+
+  // 调试用，打印初始化完成
+  Serial.println("Setup completed. Game starts.");
+}
+
+// 移动蛇并检测碰撞和食物
+void moveSnake() {
+  // 更新蛇的身体，移动每一节
+  for (int i = snakeLength - 1; i > 0; i--) {
+    snakeX[i] = snakeX[i - 1];
+    snakeY[i] = snakeY[i - 1];
+  }
+  
+  // 更新蛇头位置
+  snakeX[0] += directionX * BOX_SIZE;
+  snakeY[0] += directionY * BOX_SIZE;
+
+  // 边界检测：碰到边界则游戏结束
+  if (snakeX[0] < 0 || snakeX[0] >= SCREEN_WIDTH || snakeY[0] < 0 || snakeY[0] >= SCREEN_HEIGHT) {
+    gameover = true;
+    Serial.println("Game Over: Hit Boundary!");
+  }
+
+  // 检测是否碰到自己
+  for (int i = 1; i < snakeLength; i++) {
+    if (snakeX[0] == snakeX[i] && snakeY[0] == snakeY[i]) {
+      gameover = true;
+      Serial.println("Game Over: Hit Self!");
+    }
+  }
+
+  // 吃到食物，蛇长度增加
+  if (snakeX[0] == foodX && snakeY[0] == foodY) {
+    snakeLength++;
+    generateFood();  // 吃到食物后生成新食物
+  }
+}
+
+// 更新方向，基于摇杆的输入
+void updateDirection() {
+  // 读取摇杆的 X 和 Y 轴值
+  int xValue = analogRead(X_PIN);
+  int yValue = analogRead(Y_PIN);
+
+  // 打印摇杆的模拟输入值，便于调试
+  Serial.print("X Value: ");
+  Serial.print(xValue);
+  Serial.print(" | Y Value: ");
+  Serial.println(yValue);
+
+  // 设置移动方向
+  if (xValue < 2048 - DEADZONE) { 
+    directionX = -1;  // 向左
+    directionY = 0;
+    Serial.println("Move Left");
+  } else if (xValue > 2048 + DEADZONE) {
+    directionX = 1;   // 向右
+    directionY = 0;
+    Serial.println("Move Right");
+  }
+
+  if (yValue < 2048 - DEADZONE) { 
+    directionX = 0;
+    directionY = -1;  // 向上
+    Serial.println("Move Up");
+  } else if (yValue > 2048 + DEADZONE) {
+    directionX = 0;
+    directionY = 1;   // 向下
+    Serial.println("Move Down");
+  }
+}
+
+// 绘制游戏画面
+void drawGame() {
+  // 清空屏幕缓冲区
+  u8g2.clearBuffer();
+
+  // 绘制蛇
+  for (int i = 0; i < snakeLength; i++) {
+    u8g2.drawBox(snakeX[i], snakeY[i], BOX_SIZE, BOX_SIZE);
+  }
+
+  // 绘制食物
+  u8g2.drawBox(foodX, foodY, BOX_SIZE, BOX_SIZE);
+
+  // 如果游戏结束，显示 "Game Over"
+  if (gameover) {
+    u8g2.setCursor(30, 32);
+    u8g2.print("Game Over!");
+  }
+
+  // 发送缓冲区内容到屏幕
+  u8g2.sendBuffer();
+}
+
+// 游戏主循环
+void loop() {
+  unsigned long currentMillis = millis();
+
+  if (!gameover) {
+    if (currentMillis - previousMillis >= interval) {
+      // 更新蛇的方向
+      updateDirection();
+
+      // 移动蛇
+      moveSnake();
+
+      // 绘制游戏画面
+      drawGame();
+
+      // 记录上次刷新的时间
+      previousMillis = currentMillis;
+    }
+  } else {
+    // 游戏结束时，仅显示 Game Over
+    drawGame();
+  }
+
+  // 检测是否按下按钮重新开始游戏
+  if (digitalRead(K_PIN) == LOW && gameover) {
+    // 重置游戏状态
+    snakeLength = 5;
+    snakeX[0] = 64;
+    snakeY[0] = 32;
+    directionX = 1;
+    directionY = 0;
+    gameover = false;
+    generateFood();  // 重新生成食物
+    Serial.println("Game Restarted!");
+  }
+}
